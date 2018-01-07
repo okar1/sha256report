@@ -24,8 +24,8 @@ from collections import OrderedDict
 
 # settings
 
-# only compare last 2 early created sha files, don't calc sha
-skipShaCheck = False
+# only compare current files state witn list from last created sha files, don't calc sha
+skipShaCheck = True
 
 # when calc sha for a lot of files - it is usual to commit progress periodicaly
 # if progress file exists when running script - user got a possibility to resume
@@ -138,14 +138,15 @@ def writeShaToFile(fileName,sha256FileText):
 
 
 startDir = '.'
+print('scanning directory tree...')
+
+# fill newSha keys with paths of files. Datas will be None
+calcFilesSize(startDir, newSha, stats)
+print('files:', stats['filesCount'], ' dirs:', stats[
+      'dirsCount'], 'totalSize: ', stats['totalSize'], ' blocks')
+
+
 if not skipShaCheck:
-    print('scanning directory tree...')
-
-    # fill newSha keys with paths of files. Datas will be None
-    calcFilesSize(startDir, newSha, stats)
-    print('files:', stats['filesCount'], ' dirs:', stats[
-          'dirsCount'], 'totalSize: ', stats['totalSize'], ' blocks')
-
     if isfile(progressCommitFileName):
         print('loading results of last interrupted ckeck...')
         loadedSha=loadShaFromFile(progressCommitFileName)
@@ -176,10 +177,12 @@ if not skipShaCheck:
             writeShaToFile(progressCommitFileName, sha256FileText)
             lastTime = curTime
 
+# calc baseFileName AFTER sha calc process end
+baseFileName = datetime.strftime(datetime.now(), timeStampFormat)
+newShaFileName = baseFileName + '.sha256'
 
+if not skipShaCheck:
     print("save sha256 result to file")
-    baseFileName = datetime.strftime(datetime.now(), timeStampFormat)
-    newShaFileName = baseFileName + '.sha256'
     writeShaToFile(newShaFileName, sha256FileText)
     del sha256FileText
 
@@ -196,20 +199,19 @@ for fileName in listdir(startDir):
 suitableFileNames.sort()
 
 if not skipShaCheck:
+    # search for previous sha file name (for current sha file)
     if newShaFileName in suitableFileNames:
         i = suitableFileNames.index(newShaFileName) - 1
     else:
+        # not found
         i = -1
 else:
-    i = len(suitableFileNames) - 2
+    # "current" cha file is absent, so use last found sha file as previous
+    i=len(suitableFileNames)-1
+
 
 if i >= 0:
     oldSha = loadShaFromFile(suitableFileNames[i])
-    if skipShaCheck:
-        # if we skipped sha check - just load 2 last files
-        newSha = loadShaFromFile(suitableFileNames[i + 1])
-        # filename without .sha256 extension
-        baseFileName = suitableFileNames[i + 1][:-7]
 else:
     print('sha256 file(s) not found, exiting')
     sys.exit()
@@ -223,9 +225,11 @@ oldShaSet = set(oldSha)
 presentFiles = newShaSet & oldShaSet
 deletedFiles = oldShaSet - newShaSet
 addedFiles = newShaSet - oldShaSet
-changedFiles = set(
-    {file: None for file in presentFiles if newSha[file] != oldSha[file]})
-
+if not skipShaCheck:
+    changedFiles = set(
+        {file: None for file in presentFiles if newSha[file] != oldSha[file]})
+else:
+    changedFiles=set()
 
 print('writing compare results...')
 if addedFiles:
