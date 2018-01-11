@@ -20,31 +20,32 @@ from os.path import isfile, join
 from os import listdir
 from datetime import datetime
 from collections import OrderedDict
-# import time
 
-# settings
+settings={
+    # only compare current files state witn list from last created sha files, don't calc sha
+    'skipShaCheck' : False,
+    'blockSize' : 65536,
+    'timeStampFormat' : "%Y%m%d%H%M%S",
+    'progressCommitFileName' : 'sha256report.tmp',
+    # file names in start dir to be skipped (use lower case)
+    'files2skip' : ['.tisk', 'sha256report.tmp'],
+    # when calc sha for a lot of files - it is usual to commit progress periodicaly
+    # if progress file exists when running script - user got a possibility to resume
+    # when sha calc is over - progress file will be deleted
+    # !warning! it is assertion that working directory was not changed since last interuption of script
+    # in another case - sha results will be inconsistent
+    'progressCommitIntervalSec' : 20
+}
 
-# only compare current files state witn list from last created sha files, don't calc sha
-skipShaCheck = True
-
-# when calc sha for a lot of files - it is usual to commit progress periodicaly
-# if progress file exists when running script - user got a possibility to resume
-# when sha calc is over - progress file will be deleted
-# !warning! it is assertion that working directory was not changed since last interuption of script
-# in another case - sha results will be inconsistent
-progressCommitIntervalSec = 20
-progressCommitFileName = 'sha256report.tmp'
-
-# file names in start dir to be skipped (use lower case)
-files2skip = ['.tisk', progressCommitFileName]
-
+# current statistics storage
+stats = {'dirsCount': 0,
+         'filesCount': 0,
+         'totalSize': 0,  # size is measured in blocks
+         'curSize':0,
+         'lastPercent':0}
 
 # internal vars
 readErrorFiles = set()
-blockSize = 65536
-timeStampFormat = "%Y%m%d%H%M%S"
-stats = {'dirsCount': 0, 'filesCount': 0,
-         'totalSize': 0}  # size is measured in blocks
 
 
 # Print iterations progress
@@ -70,54 +71,51 @@ def printProgressBar(iteration, total, prefix='', suffix='', decimals=1, length=
         print()
 
 
-# filling newSha with file paths
-# process statistics (file size in blocks) recursively --> stats
-newSha = OrderedDict()
-def calcFilesSize(curDir, newSha, stats):
+# return OrderedDict with paths of files like {'path':None}
+# process statistics to vStats
+def calcFilesSize(curDir : str, vStats: dict, settings: dict, vRes = OrderedDict()):
     for fileName in listdir(curDir):
         if curDir == '.':
             fullPath = fileName
         else:
             fullPath = join(curDir, fileName)
 
-        if curDir == '.' and (fileName.lower() in files2skip):
+        if curDir == '.' and (fileName.lower() in settings['files2skip']):
             continue
 
         if isfile(fullPath):
             if curDir == '.' and fileName.endswith('.sha256'):
                 continue
 
-            stats['filesCount'] += 1
-            size = math.ceil(os.stat(fullPath).st_size / blockSize)
-            newSha[fullPath] = None
-            stats['totalSize'] += size
+            vStats['filesCount'] += 1
+            size = math.ceil(os.stat(fullPath).st_size / settings['blockSize'])
+            vStats['totalSize'] += size
+            vRes[fullPath] = None
         else:
-            stats['dirsCount'] += 1
-            calcFilesSize(fullPath, newSha, stats)
+            vStats['dirsCount'] += 1
+            calcFilesSize(fullPath, vStats, settings, vRes)
+    return vRes
 
 
 # calculate sha256 for file
 # if knownSha != None doing a simulation mode and return sha
-def sha256Checksum(filename,  blockSize, knownSha=None):
-    global curSize  # for progress calculation only
-    global lastPercent  # for progress calculation only
-    
+def sha256Checksum(filename,  blockSize, stats, knownSha=None):
     if knownSha is None:
+        # not a simulation, calc sha256
         sha256 = hashlib.sha256()
         with open(filename, 'rb') as f:
             for block in iter(lambda: f.read(blockSize), b''):
                 sha256.update(block)
-                curSize += 1
-                curPercent=100*curSize/stats['totalSize']
-                # call progressbar update only if decimal digit of percent value is changed
-                if int(curPercent*10)>int(lastPercent*10):
-                    printProgressBar(curSize, stats['totalSize'], length=50)
-                lastPercent=curPercent
-        # time.sleep(1)
+                stats['curSize'] += 1
+                curPercent = 100 * stats['curSize'] / stats['totalSize']
+                # call progressbar update only if 1st decimal digit of percent value is changed
+                if int(curPercent * 10) > int(stats['lastPercent'] * 10):
+                    printProgressBar(stats['curSize'], stats['totalSize'], length=50)
+                stats['lastPercent'] = curPercent
         return sha256.hexdigest()
     else:
         #simulation
-        curSize+=math.ceil(os.stat(filename).st_size / blockSize)
+        stats['curSize'] += math.ceil(os.stat(filename).st_size / blockSize)
         return knownSha
 
 
@@ -132,7 +130,7 @@ def loadShaFromFile(fileName):
     return res
 
 
-def writeShaToFile(fileName,sha256FileText):
+def writeShaToFile(fileName, sha256FileText):
     with open(fileName, 'w', encoding='UTF-8') as f:
         f.write('\n'.join(sha256FileText))
 
@@ -140,19 +138,19 @@ def writeShaToFile(fileName,sha256FileText):
 startDir = '.'
 print('scanning directory tree...')
 
-# fill newSha keys with paths of files. Datas will be None
-calcFilesSize(startDir, newSha, stats)
-print('files:', stats['filesCount'], ' dirs:', stats[
-      'dirsCount'], 'totalSize: ', stats['totalSize'], ' blocks')
+# get OrderedDict with paths of files like {'path':None}
+newSha: OrderedDict = calcFilesSize(startDir, stats, settings)
+print('files:', stats['filesCount'], ' dirs:', stats['dirsCount'],
+      'totalSize: ', stats['totalSize'], ' blocks')
 
 
-if not skipShaCheck:
-    if isfile(progressCommitFileName):
+if not settings['skipShaCheck']:
+    if isfile(settings['progressCommitFileName']):
         print('loading results of last interrupted ckeck...')
-        loadedSha=loadShaFromFile(progressCommitFileName)
-        for filePath,sha in newSha.items():
+        loadedSha = loadShaFromFile(settings['progressCommitFileName'])
+        for filePath, sha in newSha.items():
             if (sha is None) and (filePath in loadedSha):
-                newSha[filePath]=loadedSha[filePath]
+                newSha[filePath] = loadedSha[filePath]
         del loadedSha
 
     print('calculating sha256 ...')
@@ -162,7 +160,7 @@ if not skipShaCheck:
     sha256FileText = []
     for filePath, sha in newSha.items():
         try:
-            sha = sha256Checksum(filePath, blockSize, knownSha=sha)
+            sha = sha256Checksum(filePath, settings['blockSize'], stats, knownSha=sha)
         except PermissionError:
             print('file read failed: ' + filePath)
             readErrorFiles.add(filePath)
@@ -173,22 +171,22 @@ if not skipShaCheck:
         # progress and make a commit if need
         curTime = datetime.now()
 
-        if (curTime - lastTime).total_seconds() > progressCommitIntervalSec:
-            writeShaToFile(progressCommitFileName, sha256FileText)
+        if (curTime - lastTime).total_seconds() > settings['progressCommitIntervalSec']:
+            writeShaToFile(settings['progressCommitFileName'], sha256FileText)
             lastTime = curTime
 
 # calc baseFileName AFTER sha calc process end
-baseFileName = datetime.strftime(datetime.now(), timeStampFormat)
+baseFileName = datetime.strftime(datetime.now(), settings['timeStampFormat'])
 newShaFileName = baseFileName + '.sha256'
 
-if not skipShaCheck:
+if not settings['skipShaCheck']:
     print("save sha256 result to file")
     writeShaToFile(newShaFileName, sha256FileText)
     del sha256FileText
 
     # delete temporally progress filename
-    if isfile(progressCommitFileName):
-        os.remove(progressCommitFileName)
+    if isfile(settings['progressCommitFileName']):
+        os.remove(settings['progressCommitFileName'])
 
 
 print('detecting and loading sha256 files...')
@@ -198,7 +196,7 @@ for fileName in listdir(startDir):
         suitableFileNames += [fileName]
 suitableFileNames.sort()
 
-if not skipShaCheck:
+if not settings['skipShaCheck']:
     # search for previous sha file name (for current sha file)
     if newShaFileName in suitableFileNames:
         i = suitableFileNames.index(newShaFileName) - 1
@@ -225,11 +223,12 @@ oldShaSet = set(oldSha)
 presentFiles = newShaSet & oldShaSet
 deletedFiles = oldShaSet - newShaSet
 addedFiles = newShaSet - oldShaSet
-if not skipShaCheck:
+
+if not settings['skipShaCheck']:
     changedFiles = set(
         {file: None for file in presentFiles if newSha[file] != oldSha[file]})
 else:
-    changedFiles=set()
+    changedFiles = set()
 
 print('writing compare results...')
 if addedFiles:
