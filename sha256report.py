@@ -1,9 +1,9 @@
 """
     This script:
     1) reads all files in current directory and all subdirectories
-    2) calc sha256 for all files except *.sha256 
+    2) calc sha256 for all files except *.sha256
     3) saves it in file yyyymmddhhmmss.sha256 (current date and time)
-    4) if there is previous sha256 file - read it and compare with current sha256
+    4) if there is prev sha256 file - read it and compare with current sha256
     5) save compare results to files:
         yyyymmddhhmmss.added.sha256
         yyyymmddhhmmss.deleted.sha256
@@ -21,28 +21,29 @@ from os import listdir
 from datetime import datetime
 from collections import OrderedDict
 
-settings={
-    # only compare current files state witn list from last created sha files, don't calc sha
-    'skipShaCheck' : False,
-    'blockSize' : 65536,
-    'timeStampFormat' : "%Y%m%d%H%M%S",
-    'progressCommitFileName' : 'sha256report.tmp',
+settings = {
+    # compare current files state witn last created sha files, don't calc sha
+    'skipShaCheck': False,
+    'blockSize': 65536,
+    'timeStampFormat': "%Y%m%d%H%M%S",
+    'progressCommitFileName': 'sha256report.tmp',
     # file names in start dir to be skipped (use lower case)
-    'files2skip' : ['.tisk', 'sha256report.tmp'],
-    # when calc sha for a lot of files - it is usual to commit progress periodicaly
-    # if progress file exists when running script - user got a possibility to resume
+    'files2skip': ['.tisk', 'sha256report.tmp'],
+    # when calc sha for big files - it is usual to commit progress periodicaly
+    # if progress file exists - user got a possibility to resume
     # when sha calc is over - progress file will be deleted
-    # !warning! it is assertion that working directory was not changed since last interuption of script
+    # !warning!
+    # it is assertion that directory was not changed since last interuption
     # in another case - sha results will be inconsistent
-    'progressCommitIntervalSec' : 20
+    'progressCommitIntervalSec': 20
 }
 
 # current statistics storage
 stats = {'dirsCount': 0,
          'filesCount': 0,
          'totalSize': 0,  # size is measured in blocks
-         'curSize':0,
-         'lastPercent':0}
+         'curSize': 0,
+         'lastPercent': 0}
 
 # internal vars
 readErrorFiles = set()
@@ -50,7 +51,8 @@ readErrorFiles = set()
 
 # Print iterations progress
 # (from stackOverflow :)
-def printProgressBar(iteration, total, prefix='', suffix='', decimals=1, length=100, fill='█'):
+def printProgressBar(iteration, total, prefix='', suffix='',
+                     decimals=1, length=100, fill='█'):
     """
     Call in a loop to create terminal progress bar
     @params:
@@ -58,11 +60,13 @@ def printProgressBar(iteration, total, prefix='', suffix='', decimals=1, length=
         total       - Required  : total iterations (Int)
         prefix      - Optional  : prefix string (Str)
         suffix      - Optional  : suffix string (Str)
-        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        decimals    - Optional  : positive number of decimals in percent (Int)
         length      - Optional  : character length of bar (Int)
         fill        - Optional  : bar fill character (Str)
     """
-    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    percent = ("{0:." + str(decimals) + "f}").format(
+        100 * (iteration / float(total))
+        )
     filledLength = int(length * iteration // total)
     bar = fill * filledLength + '-' * (length - filledLength)
     print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end='\r')
@@ -73,7 +77,8 @@ def printProgressBar(iteration, total, prefix='', suffix='', decimals=1, length=
 
 # return OrderedDict with paths of files like {'path':None}
 # process statistics to vStats
-def calcFilesSize(curDir : str, vStats: dict, settings: dict, vRes = OrderedDict()):
+def calcFilesSize(curDir: str, vStats: dict,
+                  settings: dict, vRes=OrderedDict()):
     for fileName in listdir(curDir):
         if curDir == '.':
             fullPath = fileName
@@ -108,13 +113,17 @@ def sha256Checksum(filename,  blockSize, stats, knownSha=None):
                 sha256.update(block)
                 stats['curSize'] += 1
                 curPercent = 100 * stats['curSize'] / stats['totalSize']
-                # call progressbar update only if 1st decimal digit of percent value is changed
+                # call progressbar update only if 1st decimal digit
+                # of percent value is changed
                 if int(curPercent * 10) > int(stats['lastPercent'] * 10):
-                    printProgressBar(stats['curSize'], stats['totalSize'], length=50)
+                    printProgressBar(
+                        stats['curSize'],
+                        stats['totalSize'],
+                        length=50)
                 stats['lastPercent'] = curPercent
         return sha256.hexdigest()
     else:
-        #simulation
+        # simulation
         stats['curSize'] += math.ceil(os.stat(filename).st_size / blockSize)
         return knownSha
 
@@ -155,12 +164,16 @@ if not settings['skipShaCheck']:
 
     print('calculating sha256 ...')
     curSize = 0
-    lastPercent = 0 
+    lastPercent = 0
     lastTime = datetime.now()
     sha256FileText = []
     for filePath, sha in newSha.items():
         try:
-            sha = sha256Checksum(filePath, settings['blockSize'], stats, knownSha=sha)
+            sha = sha256Checksum(
+                filePath,
+                settings['blockSize'],
+                stats,
+                knownSha=sha)
         except PermissionError:
             print('file read failed: ' + filePath)
             readErrorFiles.add(filePath)
@@ -171,7 +184,8 @@ if not settings['skipShaCheck']:
         # progress and make a commit if need
         curTime = datetime.now()
 
-        if (curTime - lastTime).total_seconds() > settings['progressCommitIntervalSec']:
+        if (curTime - lastTime).total_seconds() > \
+                settings['progressCommitIntervalSec']:
             writeShaToFile(settings['progressCommitFileName'], sha256FileText)
             lastTime = curTime
 
@@ -192,7 +206,10 @@ if not settings['skipShaCheck']:
 print('detecting and loading sha256 files...')
 suitableFileNames = []
 for fileName in listdir(startDir):
-    if isfile(fileName) and len(fileName) == 21 and fileName.endswith('.sha256') and (fileName[:-7]).isdigit():
+    if isfile(fileName) and \
+            len(fileName) == 21 and \
+            fileName.endswith('.sha256') and \
+            (fileName[:-7]).isdigit():
         suitableFileNames += [fileName]
 suitableFileNames.sort()
 
@@ -205,7 +222,7 @@ if not settings['skipShaCheck']:
         i = -1
 else:
     # "current" cha file is absent, so use last found sha file as previous
-    i=len(suitableFileNames)-1
+    i = len(suitableFileNames)-1
 
 
 if i >= 0:
